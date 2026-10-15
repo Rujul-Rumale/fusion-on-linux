@@ -1,0 +1,17 @@
+.gitignore
+LICENSE
+MANIFEST.txt
+README.md
+assets/README.md
+docs/architecture.md
+docs/authentication.md
+docs/graphics.md
+docs/installation.md
+docs/troubleshooting.md
+scripts/adskidmgr.desktop
+scripts/autodesk-fusion360.desktop
+scripts/autodesk-fusion360-update.desktop
+scripts/fusion-adskidmgr-direct
+scripts/fusion360
+scripts/fusion360-update
+scripts/install-local.sh

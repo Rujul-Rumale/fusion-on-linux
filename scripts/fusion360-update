@@ -1,0 +1,80 @@
+#!/usr/bin/env bash
+#
+# fusion360-update - run FusionLauncher.exe only, to check for / apply Fusion
+# updates or to reinstall, without waiting on the main application.
+#
+# This is the same launch path as scripts/fusion360 minus the "wait for
+# Fusion360.exe" loop, so the Autodesk launcher window can do its update job and
+# then be closed independently.
+#
+set -e
+
+PREFIX="${FUSION_PREFIX:-$HOME/.local/share/fusion360/prefix}"
+UMU="${UMU_RUN:-$HOME/.local/bin/umu-run}"
+
+PROTON="${FUSION_PROTON:-}"
+if [[ -z "$PROTON" ]]; then
+    for cand in \
+        "$HOME/.local/share/fusion360/proton/GE-Proton11-3" \
+        "$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-3" \
+        "$HOME/.steam/root/compatibilitytools.d/GE-Proton11-3"
+    do
+        if [[ -d "$cand" ]]; then PROTON="$cand"; break; fi
+    done
+fi
+
+if [[ ! -x "$UMU" ]]; then
+    echo "ERROR: umu-run not found or not executable: $UMU" >&2
+    exit 1
+fi
+
+if [[ -z "$PROTON" || ! -d "$PROTON" ]]; then
+    echo "ERROR: GE-Proton runner not found (set FUSION_PROTON to override)." >&2
+    exit 1
+fi
+
+WINESERVER="$PROTON/files/bin/wineserver"
+
+DEPLOY_ROOT="$PREFIX/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production"
+LAUNCHER_DIR="$(for d in "$DEPLOY_ROOT"/*; do
+    if [[ -f "$d/FusionLauncher.exe" && -f "$d/Fusion360.exe" ]]; then
+        printf '%s %s\n' "$(stat -c %Y "$d")" "$d"
+    fi
+done | sort -nr | head -n 1 | cut -d' ' -f2-)"
+LAUNCHER="${LAUNCHER_DIR}/FusionLauncher.exe"
+
+if [[ -z "$LAUNCHER_DIR" || ! -f "$LAUNCHER" ]]; then
+    echo "ERROR: FusionLauncher.exe not found under: $DEPLOY_ROOT" >&2
+    exit 1
+fi
+
+# Same double-launch guard as the main launcher.
+if pgrep -f 'FusionLauncher.exe' >/dev/null 2>&1 || pgrep -f 'Fusion360.exe' >/dev/null 2>&1; then
+    echo "Fusion 360 is already running." >&2
+    exit 0
+fi
+
+export WINEPREFIX="$PREFIX"
+export PROTONPATH="$PROTON"
+export WINEDLLOVERRIDES="bcp47langs=,icuuc=n"
+
+# See scripts/fusion360 for the full graphics rationale. Short version: do not
+# force the discrete GPU, and keep QT_D3D_NO_FLIP=1.
+unset EGL_PLATFORM GDK_BACKEND QT_WAYLAND_RECONNECT || true
+export QT_D3D_NO_FLIP=1
+
+export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-none}"
+export DXVK_HUD="${DXVK_HUD:-none}"
+export VKD3D_DEBUG=none
+export VKD3D_SHADER_DEBUG=none
+export WINEDEBUG=-all
+
+cleanup() {
+    "$WINESERVER" -k >/dev/null 2>&1 || true
+    pkill -f "$(basename "$PROTON")" >/dev/null 2>&1 || true
+    pkill -f 'ADPClientService' >/dev/null 2>&1 || true
+    pkill -f 'xalia' >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+
+exec "$UMU" "$LAUNCHER" "$@"

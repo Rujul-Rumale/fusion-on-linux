@@ -1,0 +1,60 @@
+#!/usr/bin/env bash
+#
+# fusion-adskidmgr-direct - handle the Autodesk `adskidmgr://` browser callback.
+#
+# Chrome hands the callback to the KDE URI handler (adskidmgr.desktop), which
+# runs this script. The decisive finding: the callback must launch
+# AdskIdentityManager.exe with the Wine binary bundled inside GE-Proton
+# DIRECTLY, against the same Fusion prefix. Routing it through umu-run did not
+# complete the authentication handoff.
+#
+set -e
+
+PREFIX="${FUSION_PREFIX:-$HOME/.local/share/fusion360/prefix}"
+
+PROTON="${FUSION_PROTON:-}"
+if [[ -z "$PROTON" ]]; then
+    for cand in \
+        "$HOME/.local/share/fusion360/proton/GE-Proton11-3" \
+        "$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-3" \
+        "$HOME/.steam/root/compatibilitytools.d/GE-Proton11-3"
+    do
+        if [[ -d "$cand" ]]; then PROTON="$cand"; break; fi
+    done
+fi
+
+WINE="$PROTON/files/bin/wine"
+
+IDENTITY_MANAGER="$(find \
+    "$PREFIX/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production" \
+    -type f \
+    -iname 'AdskIdentityManager.exe' \
+    -print -quit 2>/dev/null || true)"
+
+if [[ -z "$IDENTITY_MANAGER" ]]; then
+    echo "ERROR: AdskIdentityManager.exe not found in the Fusion deployment." >&2
+    exit 1
+fi
+
+if [[ -z "$PROTON" || ! -x "$WINE" ]]; then
+    echo "ERROR: GE-Proton Wine binary not found: $WINE" >&2
+    exit 1
+fi
+
+export WINEPREFIX="$PREFIX"
+
+# See scripts/fusion360 for the full graphics rationale. Short version: do not
+# force the discrete GPU, and keep QT_D3D_NO_FLIP=1.
+export WINEDLLOVERRIDES="bcp47langs=,icuuc=n"
+unset EGL_PLATFORM GDK_BACKEND QT_WAYLAND_RECONNECT || true
+export QT_D3D_NO_FLIP=1
+
+export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-none}"
+export DXVK_HUD=none
+export VKD3D_DEBUG=none
+export VKD3D_SHADER_DEBUG=none
+export WINEDEBUG=-all
+
+# Do NOT replace this with umu-run on the tested configuration; that path
+# reproduced the authentication failure.
+exec "$WINE" "$IDENTITY_MANAGER" "$@"

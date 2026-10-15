@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Fusion 360 Launcher (Update)
+Comment=Check for Fusion 360 updates / reinstall via the Autodesk launcher
+Exec=@@HOME@@/.local/bin/fusion360-update
+Icon=autodesk-fusion360
+Terminal=false
+Categories=Development;Engineering;
+StartupNotify=true

@@ -1,0 +1,9 @@
+[Desktop Entry]
+Type=Application
+Name=Autodesk Fusion 360
+Comment=Autodesk Fusion 360 via GE-Proton
+Exec=@@HOME@@/.local/bin/fusion360
+Icon=autodesk-fusion360
+Terminal=false
+Categories=Development;Engineering;
+StartupNotify=true

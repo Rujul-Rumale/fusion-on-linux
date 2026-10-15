@@ -1,0 +1,144 @@
+#!/usr/bin/env bash
+#
+# fusion360 - launch Autodesk Fusion 360 through umu-run + GE-Proton.
+#
+# Install to ~/.local/bin/fusion360 (see scripts/install-local.sh).
+#
+# Design notes (learned the hard way on a hybrid Intel + NVIDIA laptop under
+# KDE Plasma Wayland):
+#
+#   * Launch FusionLauncher.exe, not Fusion360.exe directly. The launcher sets
+#     up product/environment state; launching Fusion360.exe on its own comes up
+#     with a black 3D canvas.
+#
+#   * Never hard-code the webdeploy production/<hash> directory. Fusion
+#     self-updates replace it. Auto-detect the newest folder that contains both
+#     FusionLauncher.exe and Fusion360.exe.
+#
+#   * Do NOT force the discrete GPU. See the graphics block below.
+#
+set -e
+
+PREFIX="${FUSION_PREFIX:-$HOME/.local/share/fusion360/prefix}"
+UMU="${UMU_RUN:-$HOME/.local/bin/umu-run}"
+
+# GE-Proton may live in the dedicated Fusion tree (preferred) or in the Steam
+# compatibility-tools directory. Auto-detect, newest first, unless FUSION_PROTON
+# is exported.
+PROTON="${FUSION_PROTON:-}"
+if [[ -z "$PROTON" ]]; then
+    for cand in \
+        "$HOME/.local/share/fusion360/proton/GE-Proton11-3" \
+        "$HOME/.steam/steam/compatibilitytools.d/GE-Proton11-3" \
+        "$HOME/.steam/root/compatibilitytools.d/GE-Proton11-3"
+    do
+        if [[ -d "$cand" ]]; then PROTON="$cand"; break; fi
+    done
+fi
+
+if [[ ! -x "$UMU" ]]; then
+    echo "ERROR: umu-run not found or not executable: $UMU" >&2
+    echo "       Install umu-launcher (~/.local/bin/umu-run) or set UMU_RUN." >&2
+    exit 1
+fi
+
+if [[ -z "$PROTON" || ! -d "$PROTON" ]]; then
+    echo "ERROR: GE-Proton runner not found." >&2
+    echo "       Looked under ~/.local/share/fusion360/proton and the Steam" >&2
+    echo "       compatibilitytools.d directory. Set FUSION_PROTON to override." >&2
+    exit 1
+fi
+
+WINESERVER="$PROTON/files/bin/wineserver"
+
+# Pick the newest production folder that contains BOTH FusionLauncher.exe and
+# Fusion360.exe. (Older folders can contain FusionLauncher.exe with no
+# Fusion360.exe and are stale; sorting by mtime keeps us on the live build.)
+DEPLOY_ROOT="$PREFIX/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production"
+LAUNCHER_DIR="$(for d in "$DEPLOY_ROOT"/*; do
+    if [[ -f "$d/FusionLauncher.exe" && -f "$d/Fusion360.exe" ]]; then
+        printf '%s %s\n' "$(stat -c %Y "$d")" "$d"
+    fi
+done | sort -nr | head -n 1 | cut -d' ' -f2-)"
+LAUNCHER="${LAUNCHER_DIR}/FusionLauncher.exe"
+
+if [[ -z "$LAUNCHER_DIR" || ! -f "$LAUNCHER" ]]; then
+    echo "ERROR: FusionLauncher.exe not found under: $DEPLOY_ROOT" >&2
+    echo "       Is Fusion installed into this prefix?" >&2
+    exit 1
+fi
+
+# Guard against double-launch. Two umu-run instances on one prefix fight over
+# the Wine lock and produce a black canvas plus severe disk/CPU thrash.
+if pgrep -f 'FusionLauncher.exe' >/dev/null 2>&1 || pgrep -f 'Fusion360.exe' >/dev/null 2>&1; then
+    echo "Fusion 360 is already running. Not starting a second instance." >&2
+    exit 0
+fi
+
+export WINEPREFIX="$PREFIX"
+export PROTONPATH="$PROTON"
+
+# icuuc=n works around Wine's ICU shim breaking the .NET/CLR bits Fusion pulls
+# in; bcp47langs= is a long-standing Fusion/Wine compatibility override.
+export WINEDLLOVERRIDES="bcp47langs=,icuuc=n"
+
+# ---------------------------------------------------------------------------
+# Graphics - read before adding any GPU variables here.
+#
+#   Do NOT set __NV_PRIME_RENDER_OFFLOAD=1, __GLX_VENDOR_LIBRARY_NAME=nvidia or
+#   __VK_LAYER_NV_optimus=NVIDIA_only. On a hybrid Intel + NVIDIA setup these
+#   can crash Fusion at Qt GUI init on a fresh boot (silent exit right after
+#   "Set appUserModelId") and can leave the 3D canvas black. DXVK selects the
+#   NVIDIA discrete GPU on its own, so forcing it gains nothing and breaks the
+#   cross-GPU present path.
+#
+#   QT_D3D_NO_FLIP=1 keeps Qt on the blt-model present path; flip-model
+#   swapchains come out black under DXVK. Do not remove it. Do not pass
+#   --disable-gpu either - that also kills the canvas.
+# ---------------------------------------------------------------------------
+
+# Some shells (IDE / tool launchers) inject Wayland platform variables. Fusion's
+# windows are XWayland; clear them so a shell launch matches a menu launch.
+unset EGL_PLATFORM GDK_BACKEND QT_WAYLAND_RECONNECT || true
+
+export QT_D3D_NO_FLIP=1
+
+# Quiet by default. Set DXVK_LOG_LEVEL=info in the environment to diagnose.
+export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-none}"
+export DXVK_HUD="${DXVK_HUD:-none}"
+export VKD3D_DEBUG=none
+export VKD3D_SHADER_DEBUG=none
+export WINEDEBUG=-all
+
+# Kill leftover Proton/Wine processes when Fusion exits so the compatibility
+# layer does not keep eating RAM. bash only runs the EXIT trap on a signal if a
+# handler for that signal is defined too, hence the TERM/INT traps.
+cleanup() {
+    "$WINESERVER" -k >/dev/null 2>&1 || true
+    pkill -f "$(basename "$PROTON")" >/dev/null 2>&1 || true
+    pkill -f 'ADPClientService' >/dev/null 2>&1 || true
+    pkill -f 'xalia' >/dev/null 2>&1 || true
+    pkill -f 'umu-run' >/dev/null 2>&1 || true
+}
+trap cleanup EXIT
+trap 'cleanup; exit 143' TERM
+trap 'cleanup; exit 130' INT
+
+"$UMU" "$LAUNCHER" "$@" &
+UMU_PID=$!
+
+# The launcher process stays alive after the user closes Fusion, so watch for
+# Fusion360.exe: wait until it appears, then break when it goes away. If it
+# never appears (launcher opened just to check for updates), wait normally.
+SEEN_FUSION=0
+while kill -0 "$UMU_PID" 2>/dev/null; do
+    if pgrep -f 'Fusion360.exe' >/dev/null 2>&1; then
+        SEEN_FUSION=1
+    elif [[ "$SEEN_FUSION" -eq 1 ]]; then
+        break
+    fi
+    sleep 2
+done
+
+kill "$UMU_PID" 2>/dev/null || true
+wait "$UMU_PID" 2>/dev/null || true

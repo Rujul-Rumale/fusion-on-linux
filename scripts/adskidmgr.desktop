@@ -1,0 +1,7 @@
+[Desktop Entry]
+Type=Application
+Name=Autodesk Identity Manager
+Exec=@@HOME@@/.local/bin/fusion-adskidmgr-direct %u
+MimeType=x-scheme-handler/adskidmgr;
+NoDisplay=true
+Terminal=false
