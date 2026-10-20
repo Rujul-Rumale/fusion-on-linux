@@ -160,3 +160,7 @@ The technical journey (debugging steps, logs, and what led to the fixes) is docu
 ## Disclaimer
 
 This is an unofficial community project. It is not endorsed, supported, or affiliated with Autodesk Inc. Use at your own risk.
+
+---
+
+![Views](https://komarev.com/ghpvc/?username=Rujul-Rumale&repo=fusion-on-linux&label=Views&color=0e75b6)
