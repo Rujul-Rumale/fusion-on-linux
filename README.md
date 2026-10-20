@@ -163,4 +163,4 @@ This is an unofficial community project. It is not endorsed, supported, or affil
 
 ---
 
-![Views](https://komarev.com/ghpvc/?username=Rujul-Rumale&repo=fusion-on-linux&label=Views&color=0e75b6)
+![Views](https://hits.sh/github.com/Rujul-Rumale/fusion-on-linux.svg?style=flat-square&label=views&color=0e75b6&labelColor=555)
