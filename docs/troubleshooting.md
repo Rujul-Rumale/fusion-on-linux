@@ -29,13 +29,49 @@ Could not find steamrt4_platform_* ...
 
 It then downloaded and verified Steam Linux Runtime 4 automatically. Subsequent launches reported the runtime as up to date.
 
-## 4. FusionLauncher.exe.ini
+## 4. FusionLauncher.exe.ini & Launcher Architecture
 
-The initial installed deployment contained `FusionLauncher.exe` but no `FusionLauncher.exe.ini`.
+### The symptom
+Launching the launcher produces an Autodesk error dialog:
 
-Launching the launcher produced the Autodesk error that the configuration file was missing/incomplete.
+```text
+Configuration file '%1' is missing or incomplete.
+Please re-install the application, and contact support if this does not resolve the probem.
+```
 
-An older production directory contained a valid `.ini` pointing to the current `Fusion360.exe`. Copying that file into the current production directory repaired the launcher.
+### Root cause
+Autodesk WebDeploy uses a split directory layout under `webdeploy/production/`:
+1. **Persistent launcher directory** (e.g. `6a0c9611291d45bb9226980209917c3d`):
+   * This is where Autodesk creates the Windows Desktop / Start Menu shortcut (`Autodesk Fusion.lnk`).
+   * Contains `FusionLauncher.exe` and `FusionLauncher.exe.ini`.
+   * Its `FusionLauncher.exe.ini` contains:
+     ```ini
+     [Launcher]
+     stream = production
+     auid = AutodeskInc.Fusion360
+     cmd = ""C:\users\steamuser\AppData\Local\Autodesk\webdeploy\production\<payload_hash>\Fusion360.exe""
+     global = False
+     ```
+2. **Versioned payload directories** (e.g. `a3178fba...`):
+   * Contains the full application binaries (`Fusion360.exe`, DLLs, runtime files) and a copy of `FusionLauncher.exe`.
+   * **Crucially, Autodesk does not place a `FusionLauncher.exe.ini` inside this payload directory.**
+
+Because the Linux wrapper script (`scripts/fusion360`) dynamically targets the payload directory that contains `Fusion360.exe` as `LAUNCHER_DIR`, executing `LAUNCHER="${LAUNCHER_DIR}/FusionLauncher.exe"` fails if that directory lacks `FusionLauncher.exe.ini`. `FusionLauncher.exe` looks for its `.ini` in its own working directory and throws the "missing or incomplete / Please re-install" message.
+
+### Fix (automated in `scripts/fusion360`)
+The launcher script now automatically verifies if `${LAUNCHER_DIR}/FusionLauncher.exe.ini` exists before executing. If missing, it dynamically generates the UTF-16LE configuration file with the proper byte-order mark (BOM):
+
+```bash
+if [[ ! -f "${LAUNCHER_DIR}/FusionLauncher.exe.ini" ]]; then
+    DIR_NAME="$(basename "$LAUNCHER_DIR")"
+    python3 -c "
+target_cmd = f'\"\"C:\\\\users\\\\steamuser\\\\AppData\\\\Local\\\\Autodesk\\\\webdeploy\\\\production\\\\${DIR_NAME}\\\\Fusion360.exe\"\"'
+ini_content = f'[Launcher]\r\nstream = production\r\nauid = AutodeskInc.Fusion360\r\ncmd = {target_cmd}\r\nglobal = False\r\n\r\n'
+with open('${LAUNCHER_DIR}/FusionLauncher.exe.ini', 'wb') as f:
+    f.write(ini_content.encode('utf-16'))
+" 2>/dev/null || true
+fi
+```
 
 ## 5. Identity Manager / AdSSO investigation
 
@@ -228,14 +264,34 @@ This is a known DXVK 3.x + Wine 11.x issue (upstream `doitsujin/dxvk#5771`). It
 also appears on fully working systems and is **not** a fault in this setup.
 Running with `DXVK_LOG_LEVEL=none` (the launcher default) suppresses it.
 
-## 15. Updating Fusion
+## 15. Updating Fusion & Understanding WebDeploy Streamer Cleanup
 
-Fusion self-updates, which replaces the `webdeploy/production/<hash>` directory.
-Because the launcher auto-detects the live deployment, no path edit is needed
-after an update. If an update leaves a launcher without its `.ini`, see §4.
+Fusion self-updates replace the `webdeploy/production/<hash>` directory. Because the launcher auto-detects the live deployment, no path edit is needed after an update.
 
-To trigger an update check / reinstall, use `scripts/fusion360-update`, which
-runs the Autodesk launcher without waiting on the main application.
+### What happens during an update ("restart to update")
+1. Autodesk downloads the new build into a brand-new payload directory (e.g., `a3178fba...`).
+2. Autodesk updates `FusionLauncher.exe.ini` in the persistent launcher folder (`6a0c9611...`) to point to the new `Fusion360.exe`.
+3. In the background, `streamer.exe` is invoked to uninstall the older version:
+   ```text
+   streamer.exe --quiet --cleanup -p uninstall -s production
+   ```
+4. During this cleanup phase, an older folder (e.g., `736d2b4c...` from an earlier release) may remain visible on disk until all files and registry keys are unlinked.
+
+### The "corrupt update / reinstall loop" trap
+If you inspect `production/` immediately after a "restart to update" notice, you might see an older directory that appears to have stale binaries (e.g., older timestamps or sizes). It is easy to mistake this for a failed or corrupt update.
+
+If you manually delete or move that folder while the streamer is running:
+* `autodesk.webdeploy.streamer.log` will flood with thousands of warnings:
+  ```text
+  WARNING :: Could not remove non-existant file: \\?\c:\...\production\<old-hash>\...
+  ```
+  This is harmless — the uninstaller is simply noting that files it wanted to delete were already missing.
+* If your launcher script drops back to the new build folder which lacks `FusionLauncher.exe.ini`, you will get the **"Please re-install the application"** message (see §4).
+* It can feel like WebDeploy is rejecting the install because of the deleted folder, but it is actually just the missing `.ini` in the new folder.
+
+Do **not** wipe the prefix or move folders manually during updates. Let the streamer finish, and ensure the active folder has its `.ini`.
+
+To trigger an update check or run update tasks without launching the full CAD GUI, use `scripts/fusion360-update`.
 
 ## 16. Recovery / reset notes
 
@@ -261,3 +317,74 @@ Verify clean:
 ```bash
 pgrep -af 'fusion360/prefix.*(Fusion360|FusionLauncher|AdskIdentityManager)' || echo "Fusion clean"
 ```
+
+## 17. Stale ADPSDK Client Service (`CS.json`)
+
+Autodesk's Analytics & Data Platform SDK (`ADPSDK`) records the state of its background service in:
+
+```text
+~/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Roaming/Autodesk/ADPSDK/CS.json
+```
+
+It contains the absolute Windows path to `ADPClientService.exe`:
+
+```json
+{
+    "path": "C:\\users\\steamuser\\AppData\\Local\\Autodesk\\webdeploy\\production\\<old-hash>\\ADPClientService.exe",
+    "status": 1,
+    "statusMessage": "Running"
+}
+```
+
+When an older deployment is uninstalled or removed, `CS.json` can still reference the uninstalled folder path. This can prevent ADPSDK from starting or connecting to the service in the active deployment.
+
+### Fix
+Either update the path in `CS.json` to the current production folder:
+
+```bash
+PREFIX="$HOME/.local/share/fusion360/prefix"
+CURRENT_HASH="$(for d in "$PREFIX/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production"/*; do
+    if [[ -f "$d/Fusion360.exe" ]]; then basename "$d"; fi
+done | head -n 1)"
+
+sed -i "s|production\\\\[^\\\\]*\\\\ADPClientService.exe|production\\\\${CURRENT_HASH}\\\\ADPClientService.exe|" \
+    "$PREFIX/drive_c/users/steamuser/AppData/Roaming/Autodesk/ADPSDK/CS.json"
+```
+
+Or delete `CS.json` completely so Fusion recreates it on the next launch:
+
+```bash
+rm -f "$HOME/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Roaming/Autodesk/ADPSDK/CS.json"
+```
+
+## 18. Recovering from a Broken Update State without Reinstalling
+
+If Fusion stops launching after an update and you see the "Please re-install" dialog:
+
+1. **Terminate all stale Wine/Proton/Fusion processes:**
+   ```bash
+   "$HOME/.local/share/fusion360/proton/GE-Proton11-3/files/bin/wineserver" -k || true
+   pkill -f 'GE-Proton11-3' || true
+   pkill -f 'FusionLauncher.exe' || true
+   pkill -f 'Fusion360.exe' || true
+   pkill -f 'umu-run' || true
+   ```
+2. **Find which production folder has the live `Fusion360.exe`:**
+   ```bash
+   for d in ~/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production/*; do
+       if [[ -f "$d/Fusion360.exe" ]]; then echo "Live deployment: $d"; fi
+   done
+   ```
+3. **Verify `FusionLauncher.exe.ini` exists in that folder:**
+   With the updated `scripts/fusion360`, this is handled automatically on launch. To verify manually:
+   ```bash
+   ls -la "$LIVE_DIR/FusionLauncher.exe.ini"
+   ```
+4. **Clean stale ADPSDK state:**
+   ```bash
+   rm -f ~/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Roaming/Autodesk/ADPSDK/CS.json
+   ```
+5. **Launch Fusion:**
+   ```bash
+   ~/.local/bin/fusion360
+   ```

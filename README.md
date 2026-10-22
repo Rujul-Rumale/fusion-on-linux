@@ -87,6 +87,18 @@ On the tested Intel/NVIDIA hybrid laptop, **removing** the explicit GPU-forcing 
 
 See [docs/graphics.md](docs/graphics.md) for logs and context.
 
+### 3) Post-update "Configuration file is missing or incomplete / Please re-install" dialog
+
+After a Fusion self-update ("restart to update"), launching Fusion may show:
+```text
+Configuration file '%1' is missing or incomplete. Please re-install the application...
+```
+Autodesk places `FusionLauncher.exe.ini` only in the persistent launcher directory, not in the versioned payload folder. The provided launcher script (`scripts/fusion360`) automatically generates the required UTF-16LE `.ini` file in the active deployment folder on startup.
+
+If background services still fail after an update, remove stale cached pointers in `~/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Roaming/Autodesk/ADPSDK/CS.json`.
+
+See [docs/troubleshooting.md](docs/troubleshooting.md#4-fusionlauncherexeini--launcher-architecture) (§4, §15, §17, §18) for the full breakdown and recovery steps.
+
 ## Quick Troubleshooting
 
 Common fixes are documented in [docs/troubleshooting.md](docs/troubleshooting.md), covering:

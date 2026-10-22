@@ -48,6 +48,18 @@ if [[ -z "$LAUNCHER_DIR" || ! -f "$LAUNCHER" ]]; then
     exit 1
 fi
 
+# Ensure FusionLauncher.exe.ini exists in LAUNCHER_DIR.
+# If missing, FusionLauncher fails with: "Configuration file '%1' is missing or incomplete. Please re-install..."
+if [[ ! -f "${LAUNCHER_DIR}/FusionLauncher.exe.ini" ]]; then
+    DIR_NAME="$(basename "$LAUNCHER_DIR")"
+    python3 -c "
+target_cmd = f'\"\"C:\\\\users\\\\steamuser\\\\AppData\\\\Local\\\\Autodesk\\\\webdeploy\\\\production\\\\${DIR_NAME}\\\\Fusion360.exe\"\"'
+ini_content = f'[Launcher]\r\nstream = production\r\nauid = AutodeskInc.Fusion360\r\ncmd = {target_cmd}\r\nglobal = False\r\n\r\n'
+with open('${LAUNCHER_DIR}/FusionLauncher.exe.ini', 'wb') as f:
+    f.write(ini_content.encode('utf-16'))
+" 2>/dev/null || true
+fi
+
 # Same double-launch guard as the main launcher.
 if pgrep -f 'FusionLauncher.exe' >/dev/null 2>&1 || pgrep -f 'Fusion360.exe' >/dev/null 2>&1; then
     echo "Fusion 360 is already running." >&2

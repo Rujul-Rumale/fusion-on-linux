@@ -163,35 +163,40 @@ for d in "$HOME/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Lo
 done
 ```
 
-The active deployment in the latest test was `736d2b4c5e6b95e77c11721da222cf21c6a1fc1f`.
-Older folders (for example one containing `FusionLauncher.exe` but no
-`Fusion360.exe`) are stale and are ignored.
+Autodesk maintains a persistent launcher directory (such as `6a0c9611291d45bb9226980209917c3d`), which holds `FusionLauncher.exe` and shortcuts, alongside the versioned payload folders containing `Fusion360.exe`.
 
 ## 7. Fusion launcher configuration (`FusionLauncher.exe.ini`)
 
-If a deployment contains `FusionLauncher.exe` but no `FusionLauncher.exe.ini`,
-launching it produces:
+`FusionLauncher.exe` requires a configuration file named `FusionLauncher.exe.ini` in its working directory. If missing or incomplete, it displays:
 
 ```text
-Configuration file FusionLauncher.exe.ini is missing or incomplete
+Configuration file '%1' is missing or incomplete.
+Please re-install the application, and contact support if this does not resolve the probem.
 ```
 
-An older production directory can contain a valid `.ini` whose `cmd` points at
-the current `Fusion360.exe`. Copy it into the current deployment:
+**Good news:** `scripts/fusion360` and `scripts/fusion360-update` now **automatically generate** this file for the active deployment directory upon launch if missing.
 
-```bash
-DEPLOY="$HOME/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production"
-# older deployment that has the .ini
-OLD="$DEPLOY/6a0c9611291d45bb9226980209917c3d"
-# current deployment
-NEW="$DEPLOY/736d2b4c5e6b95e77c11721da222cf21c6a1fc1f"
-cp "$OLD/FusionLauncher.exe.ini" "$NEW/FusionLauncher.exe.ini"
+If you ever need to manually write or verify this configuration file, it must be UTF-16LE encoded with BOM:
+
+```ini
+[Launcher]
+stream = production
+auid = AutodeskInc.Fusion360
+cmd = ""C:\users\steamuser\AppData\Local\Autodesk\webdeploy\production\<payload_hash>\Fusion360.exe""
+global = False
 ```
 
-Verify:
+Or write it via Python:
 
 ```bash
-cat "$NEW/FusionLauncher.exe.ini"
+DEPLOY_DIR="$HOME/.local/share/fusion360/prefix/drive_c/users/steamuser/AppData/Local/Autodesk/webdeploy/production/<payload_hash>"
+DIR_NAME="$(basename "$DEPLOY_DIR")"
+python3 -c "
+target_cmd = f'\"\"C:\\\\users\\\\steamuser\\\\AppData\\\\Local\\\\Autodesk\\\\webdeploy\\\\production\\\\${DIR_NAME}\\\\Fusion360.exe\"\"'
+ini_content = f'[Launcher]\r\nstream = production\r\nauid = AutodeskInc.Fusion360\r\ncmd = {target_cmd}\r\nglobal = False\r\n\r\n'
+with open('${DEPLOY_DIR}/FusionLauncher.exe.ini', 'wb') as f:
+    f.write(ini_content.encode('utf-16'))
+"
 ```
 
 ## 8. Final Fusion launcher

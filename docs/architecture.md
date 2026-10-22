@@ -25,7 +25,8 @@ Fusion360.exe
 ```
 
 Autodesk installs each build into `webdeploy/production/<hash>` and a
-self-update replaces that directory, so the launcher detects the newest folder
+self-update replaces that directory, while keeping a persistent launcher
+directory for shortcut references. The launcher script detects the newest folder
 that contains both `FusionLauncher.exe` and `Fusion360.exe` instead of
 hard-coding a hash.
 
@@ -35,12 +36,15 @@ hard-coding a hash.
 
 1. Resolves GE-Proton (dedicated Fusion tree or Steam compatibility-tools dir).
 2. Resolves the live Fusion deployment by mtime.
-3. Refuses to start a second instance while Fusion is running (double-launch
+3. Ensures `FusionLauncher.exe.ini` exists in that deployment folder (dynamically
+   writing the UTF-16LE configuration if missing, preventing the post-update
+   "Configuration file is missing or incomplete" error).
+4. Refuses to start a second instance while Fusion is running (double-launch
    causes a black canvas and Wine-lock thrash).
-4. Exports `WINEPREFIX`, `PROTONPATH`, `QT_D3D_NO_FLIP=1`,
+5. Exports `WINEPREFIX`, `PROTONPATH`, `QT_D3D_NO_FLIP=1`,
    `WINEDLLOVERRIDES="bcp47langs=,icuuc=n"` and quiet DXVK/VKD3D logging.
-5. Deliberately does **not** export any force-discrete-GPU variables.
-6. Runs `FusionLauncher.exe` via UMU, then cleans up leftover Proton/Wine
+6. Deliberately does **not** export any force-discrete-GPU variables.
+7. Runs `FusionLauncher.exe` via UMU, then cleans up leftover Proton/Wine
    processes when `Fusion360.exe` exits.
 
 ## Rendering / present path
