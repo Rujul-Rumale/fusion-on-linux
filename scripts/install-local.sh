@@ -11,6 +11,9 @@ install -Dm755 "$REPO_DIR/scripts/fusion360"                "$HOME/.local/bin/fu
 install -Dm755 "$REPO_DIR/scripts/fusion360-update"         "$HOME/.local/bin/fusion360-update"
 install -Dm755 "$REPO_DIR/scripts/fusion-adskidmgr-direct"  "$HOME/.local/bin/fusion-adskidmgr-direct"
 
+mkdir -p "$HOME/.local/share/fusion360"
+install -Dm644 "$REPO_DIR/scripts/dxvk.conf"                "$HOME/.local/share/fusion360/dxvk.conf"
+
 mkdir -p "$HOME/.local/share/applications"
 
 sed "s#@@HOME@@#$HOME#g" \

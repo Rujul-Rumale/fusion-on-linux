@@ -11,6 +11,7 @@ docs/troubleshooting.md
 scripts/adskidmgr.desktop
 scripts/autodesk-fusion360.desktop
 scripts/autodesk-fusion360-update.desktop
+scripts/dxvk.conf
 scripts/fusion-adskidmgr-direct
 scripts/fusion360
 scripts/fusion360-update

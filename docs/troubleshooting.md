@@ -388,3 +388,68 @@ If Fusion stops launching after an update and you see the "Please re-install" di
    ```bash
    ~/.local/bin/fusion360
    ```
+
+## 19. "Unable to sign in: Your system settings, firewall, or antivirus are likely preventing sign in"
+
+### Symptom
+On startup, a blocking modal dialog appears titled **"Unable to sign in"**:
+
+```text
+Your system settings, firewall, or antivirus are likely preventing sign in.
+To resolve this issue, follow the instructions in the link below.
+```
+
+In `AppData/Local/Autodesk/Neutron Platform/logs/AppLogFile*.log`:
+
+```text
+IDSDKAuth: idsdk_set_product_config failed with error IDSDK_E_SERVER_PROCESS_NOT_READY
+IDSDKAuth: Showing blocking Quit dialog. idsdk=IDSDK_E_SERVER_PROCESS_NOT_READY operation=idsdk_set_product_config title=Unable to sign in
+```
+
+### Root Cause
+This error is rarely caused by a literal Linux firewall or antivirus. It occurs when `AdskIdentityManager.exe` fails to start, bind to shared memory, or handshake with Fusion:
+1. **Stale IDSDK IPC Lock Files**: An unclean exit (or process termination via `wineserver -k`) leaves stale `.lock` files in:
+   ```text
+   drive_c/ProgramData/Autodesk/IDSDK/<user-hash>/interprocess/01000000/Autodesk.IDSDK.StartupLock.lock
+   drive_c/ProgramData/Autodesk/IDSDK/<user-hash>/interprocess/01000000/IDSDKAppState-v2.lock
+   ```
+   When Fusion restarts, `AdskIdentityManager.exe` fails to acquire the startup mutex and times out.
+2. **WebView2 Flag Overrides**: Injecting experimental Chromium flags via `WEBVIEW2_ADDITIONAL_BROWSER_ARGUMENTS` (such as disabling SmartScreen, tracking prevention, or feature flags) can break the security and callback pipeline of Identity Manager's embedded browser.
+
+### Fix
+Purge any lingering `.lock` files:
+
+```bash
+PREFIX="$HOME/.local/share/fusion360/prefix"
+rm -f "$PREFIX/drive_c/ProgramData/Autodesk/IDSDK/"*/interprocess/01000000/*.lock
+```
+
+The updated `scripts/fusion360` script purges these lock files automatically before launching and upon session cleanup.
+
+## 20. Viewport Stutter, 120Hz Frame Pacing, and Hybrid Laptop GPU Power Management
+
+### Symptom
+Viewport navigation (orbit, pan, zoom) feels laggy and micro-stuttery irrespective of graphic settings on high-refresh (120Hz/144Hz) Wayland displays, even when GPU render times are low (~5ms).
+
+### Root Causes & Solutions
+
+1. **Wayland 120Hz Frame Pacing & Double-VSync Conflicts**:
+   When DXVK renders with `dxgi.syncInterval = 0` unthrottled, frames arrive at irregular intervals into KWin's compositor queue on XWayland. KWin composites at 120Hz, resulting in dropped frames and visual judder.
+   - **Solution**: Configure `scripts/dxvk.conf`:
+     - `dxgi.syncInterval = 0` + `dxvk.tearFree = True`: Enables Vulkan **Mailbox presentation mode** (delivers the freshest rendered frame at 120Hz with zero queue stalls and no tearing).
+     - `dxgi.maxFrameRate = 120` & `dxvk.maxFrameRate = 120`: Caps frame delivery to the panel's 120Hz frequency.
+     - `dxgi.maxFrameLatency = 1` & `d3d11.maxFrameLatency = 1`: Drops input queue depth to 1 frame for instant mouse response.
+
+2. **Hybrid CPU Core Affinity (Intel 12th-Gen+ P/E Cores)**:
+   On hybrid architectures (e.g. Alder Lake Intel i7-12700H), the Linux kernel scheduler can place the main CAD render thread or `wineserver` onto low-power Efficiency cores (CPUs 8–11).
+   - **Solution**: `scripts/fusion360` pins the process tree to Performance cores (`taskset -c 0-7`).
+
+3. **Background Accessibility Tree Crawling (`xalia.exe`)**:
+   Proton enables Xalia accessibility helper by default, which inspects Qt and WebView2 accessibility trees on every UI change, burning 25–35% CPU in the background.
+   - **Solution**: Export `PROTON_USE_XALIA=0` in the launcher.
+
+4. **NVIDIA Laptop GPU Power Management (Runtime D3 / D3cold vs P8 State)**:
+   Unlike games that render constantly, CAD applications render **on demand** (0 FPS when looking at a model; burst of 120 FPS when dragging the mouse).
+   - Under Linux, NVIDIA's dynamic frequency scaling (`nvidia-powerd` / PowerMizer) drops the GPU down to **P8 state** (210 MHz core / 405 MHz VRAM) when 0 FPS is rendered.
+   - **Do NOT enable permanent persistence mode (`nvidia-smi -pm 1`) on laptops**, as it forces the discrete GPU to stay awake at 5–10W constantly and breaks PCIe Runtime D3 (D3cold 0W power-down).
+   - The tuned DXVK Mailbox presentation mode provides smooth 120Hz navigation while still allowing the GPU to power down to 0W when Fusion exits.

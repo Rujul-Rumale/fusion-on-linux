@@ -99,6 +99,22 @@ If background services still fail after an update, remove stale cached pointers 
 
 See [docs/troubleshooting.md](docs/troubleshooting.md#4-fusionlauncherexeini--launcher-architecture) (§4, §15, §17, §18) for the full breakdown and recovery steps.
 
+### 4) "Unable to sign in: Your system settings, firewall, or antivirus are likely preventing sign in"
+
+An unclean shutdown or terminating Wine while Identity Manager is running leaves stale IPC `.lock` files (`Autodesk.IDSDK.StartupLock.lock`) in `ProgramData/Autodesk/IDSDK/...`. On restart, the identity service fails to acquire the startup mutex and blocks launch with `IDSDK_E_SERVER_PROCESS_NOT_READY`.
+
+The provided `scripts/fusion360` script purges leftover lock files before launching and in its cleanup trap.
+
+See [docs/troubleshooting.md](docs/troubleshooting.md#19-unable-to-sign-in-your-system-settings-firewall-or-antivirus-are-likely-preventing-sign-in) (§19) for manual recovery.
+
+### 5) Viewport micro-stutter & frame pacing on 120Hz/144Hz Wayland displays
+
+Running unthrottled frames into KWin XWayland causes buffer judder and stutter during 3D orbit and pan. Additionally, Intel hybrid CPUs can schedule CAD threads onto low-clock E-cores, and Proton's accessibility scanner (`xalia`) burns background CPU.
+
+The repository includes a tuned [scripts/dxvk.conf](scripts/dxvk.conf) (activating Vulkan Mailbox presentation mode, 120Hz frame pacing, and 1-frame latency queue) and pins processes to Performance cores (`taskset -c 0-7`) with `PROTON_USE_XALIA=0`.
+
+See [docs/graphics.md](docs/graphics.md#dxvk-tuning-for-120hz-displays--latency) and [docs/troubleshooting.md](docs/troubleshooting.md#20-viewport-stutter-120hz-frame-pacing-and-hybrid-laptop-gpu-power-management) (§20) for details.
+
 ## Quick Troubleshooting
 
 Common fixes are documented in [docs/troubleshooting.md](docs/troubleshooting.md), covering:

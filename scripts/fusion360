@@ -115,6 +115,22 @@ unset EGL_PLATFORM GDK_BACKEND QT_WAYLAND_RECONNECT || true
 
 export QT_D3D_NO_FLIP=1
 
+# Disable Xalia accessibility crawler (prevents background CPU burn inspecting Qt/WebView2 UI trees)
+export PROTON_USE_XALIA=0
+
+# Clear any stale Autodesk Identity Manager lock files from previous unclean shutdowns
+# (prevents "Unable to sign in: Your system settings, firewall, or antivirus..." error)
+rm -f "$PREFIX/drive_c/ProgramData/Autodesk/IDSDK/"*/interprocess/01000000/*.lock 2>/dev/null || true
+
+# DXVK performance & latency tuning (frame pacing, max latency=1, multithreaded shaders, mailbox presentation)
+export DXVK_CONFIG_FILE="${DXVK_CONFIG_FILE:-$HOME/.local/share/fusion360/dxvk.conf}"
+export DXVK_CONFIG="dxgi.syncInterval=0;dxvk.tearFree=True;dxgi.maxFrameRate=120;dxvk.maxFrameRate=120;dxgi.maxFrameLatency=1;d3d11.maxFrameLatency=1;d3d11.relaxedBarriers=True;d3d11.relaxedGraphicsBarriers=True;dxvk.numCompilerThreads=8;dxvk.enableGraphicsPipelineLibrary=True;dxvk.enableMemoryDefrag=True"
+
+# Keep dxvk.conf synced to active payload directory
+if [[ -f "$DXVK_CONFIG_FILE" && -d "$LAUNCHER_DIR" ]]; then
+    cp -u "$DXVK_CONFIG_FILE" "$LAUNCHER_DIR/dxvk.conf" 2>/dev/null || true
+fi
+
 # Quiet by default. Set DXVK_LOG_LEVEL=info in the environment to diagnose.
 export DXVK_LOG_LEVEL="${DXVK_LOG_LEVEL:-none}"
 export DXVK_HUD="${DXVK_HUD:-none}"
@@ -130,13 +146,22 @@ cleanup() {
     pkill -f "$(basename "$PROTON")" >/dev/null 2>&1 || true
     pkill -f 'ADPClientService' >/dev/null 2>&1 || true
     pkill -f 'xalia' >/dev/null 2>&1 || true
+    pkill -f 'winedevice' >/dev/null 2>&1 || true
     pkill -f 'umu-run' >/dev/null 2>&1 || true
+    rm -f "$PREFIX/drive_c/ProgramData/Autodesk/IDSDK/"*/interprocess/01000000/*.lock 2>/dev/null || true
 }
 trap cleanup EXIT
 trap 'cleanup; exit 143' TERM
 trap 'cleanup; exit 130' INT
 
-"$UMU" "$LAUNCHER" "$@" &
+# Pin to Performance cores (CPUs 0-7 on 12th-Gen Intel) to prevent wineserver
+# and CAD render threads from being throttled onto low-power E-cores (CPUs 8-11).
+TASKSET_CMD=()
+if command -v taskset >/dev/null 2>&1 && [[ $(nproc) -ge 12 ]]; then
+    TASKSET_CMD=(taskset -c 0-7)
+fi
+
+"${TASKSET_CMD[@]}" "$UMU" "$LAUNCHER" "$@" &
 UMU_PID=$!
 
 # The launcher process stays alive after the user closes Fusion, so watch for
